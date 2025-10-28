@@ -177,8 +177,8 @@ if __name__ == "__main__":
     
     # Model paths (for loading base model configs)
     parser.add_argument('--base_model_dir', type=str,
-                       default='data/input/BioMPNN/vanilla_model_weights',
-                       help='Directory containing base model .pt files')
+                       default='data/input/BioMPNN/soluble_model_weights',
+                       help='Directory containing base model .pt files (use soluble_model_weights for soluble proteins)')
     parser.add_argument('--base_model_config_dir', type=str,
                        default='data/input/BioMPNN/base_hparams',
                        help='Directory containing base model config .yaml files')

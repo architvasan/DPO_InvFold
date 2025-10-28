@@ -1,15 +1,15 @@
 #!/bin/bash
-# Setup script for downloading ProteinMPNN base models
+# Setup script for downloading ProteinMPNN soluble model weights
 
 set -e
 
 echo "=========================================="
-echo "BioMPNN Base Model Setup"
+echo "BioMPNN Soluble Model Setup"
 echo "=========================================="
 
 # Create directories
 echo "Creating directories..."
-mkdir -p data/input/BioMPNN/vanilla_model_weights
+mkdir -p data/input/BioMPNN/soluble_model_weights
 mkdir -p data/input/BioMPNN/base_hparams
 mkdir -p data/pdbs
 mkdir -p outputs
@@ -17,10 +17,10 @@ mkdir -p outputs
 echo "Directories created successfully!"
 
 # Check if models already exist
-if [ -f "data/input/BioMPNN/vanilla_model_weights/v_48_020.pt" ]; then
+if [ -f "data/input/BioMPNN/soluble_model_weights/v_48_020.pt" ]; then
     echo ""
-    echo "Base model weights already exist!"
-    echo "Location: data/input/BioMPNN/vanilla_model_weights/"
+    echo "Soluble model weights already exist!"
+    echo "Location: data/input/BioMPNN/soluble_model_weights/"
     echo ""
     read -p "Do you want to re-download? (y/n) " -n 1 -r
     echo
@@ -32,15 +32,15 @@ fi
 
 echo ""
 echo "=========================================="
-echo "Downloading ProteinMPNN Models"
+echo "Downloading ProteinMPNN Soluble Models"
 echo "=========================================="
 echo ""
-echo "You need to download ProteinMPNN model weights from:"
-echo "https://github.com/dauparas/ProteinMPNN"
+echo "Soluble models are optimized for soluble proteins."
+echo "Source: https://github.com/dauparas/ProteinMPNN"
 echo ""
 echo "Options:"
-echo "1. Clone the ProteinMPNN repository and copy weights"
-echo "2. Download weights directly (if available)"
+echo "1. Download directly using wget/curl (recommended)"
+echo "2. Clone ProteinMPNN repository and copy weights"
 echo "3. Use existing weights from another location"
 echo ""
 read -p "Choose option (1/2/3): " option
@@ -48,16 +48,48 @@ read -p "Choose option (1/2/3): " option
 case $option in
     1)
         echo ""
+        echo "Downloading soluble model weights..."
+
+        # Base URL for ProteinMPNN models
+        BASE_URL="https://files.ipd.uw.edu/pub/training_sets/soluble_model_weights"
+
+        # Common soluble model files
+        MODELS=("v_48_002.pt" "v_48_010.pt" "v_48_020.pt" "v_48_030.pt")
+
+        cd data/input/BioMPNN/soluble_model_weights
+
+        for model in "${MODELS[@]}"; do
+            echo "Downloading $model..."
+            if command -v wget &> /dev/null; then
+                wget -q --show-progress "${BASE_URL}/${model}" -O "${model}" || echo "Failed to download $model (may not exist)"
+            elif command -v curl &> /dev/null; then
+                curl -L -o "${model}" "${BASE_URL}/${model}" || echo "Failed to download $model (may not exist)"
+            else
+                echo "Error: Neither wget nor curl is available. Please install one of them."
+                cd - > /dev/null
+                exit 1
+            fi
+        done
+
+        cd - > /dev/null
+        echo "Download complete!"
+        ;;
+    2)
+        echo ""
         echo "Cloning ProteinMPNN repository..."
         if [ ! -d "temp_proteinmpnn" ]; then
             git clone https://github.com/dauparas/ProteinMPNN.git temp_proteinmpnn
         fi
-        
-        echo "Copying model weights..."
-        if [ -d "temp_proteinmpnn/vanilla_model_weights" ]; then
-            cp temp_proteinmpnn/vanilla_model_weights/*.pt data/input/BioMPNN/vanilla_model_weights/ 2>/dev/null || echo "No .pt files found in vanilla_model_weights"
+
+        echo "Copying soluble model weights..."
+        if [ -d "temp_proteinmpnn/training/model_weights" ]; then
+            # Try to find soluble weights in the repo
+            find temp_proteinmpnn -name "*.pt" -path "*/soluble*" -exec cp {} data/input/BioMPNN/soluble_model_weights/ \; 2>/dev/null || \
+            echo "Note: Copying all available .pt files..."
+            find temp_proteinmpnn -name "*.pt" -exec cp {} data/input/BioMPNN/soluble_model_weights/ \; 2>/dev/null || \
+            echo "Warning: No .pt files found in repository"
         fi
-        
+
         echo "Cleaning up..."
         # Optionally remove the cloned repo
         read -p "Remove temporary ProteinMPNN clone? (y/n) " -n 1 -r
@@ -66,21 +98,12 @@ case $option in
             rm -rf temp_proteinmpnn
         fi
         ;;
-    2)
-        echo ""
-        echo "Please download model weights manually from:"
-        echo "https://github.com/dauparas/ProteinMPNN/tree/main/vanilla_model_weights"
-        echo ""
-        echo "Place the .pt files in: data/input/BioMPNN/vanilla_model_weights/"
-        echo ""
-        read -p "Press enter when done..."
-        ;;
     3)
         echo ""
-        read -p "Enter path to existing model weights directory: " weights_path
+        read -p "Enter path to existing soluble model weights directory: " weights_path
         if [ -d "$weights_path" ]; then
             echo "Creating symbolic link..."
-            ln -sf "$(realpath $weights_path)" data/input/BioMPNN/vanilla_model_weights
+            ln -sf "$(realpath $weights_path)" data/input/BioMPNN/soluble_model_weights
             echo "Linked successfully!"
         else
             echo "Error: Directory not found: $weights_path"
@@ -140,30 +163,40 @@ echo "Verifying Setup"
 echo "=========================================="
 
 # Check for model files
-model_count=$(ls data/input/BioMPNN/vanilla_model_weights/*.pt 2>/dev/null | wc -l)
+model_count=$(ls data/input/BioMPNN/soluble_model_weights/*.pt 2>/dev/null | wc -l)
 config_count=$(ls data/input/BioMPNN/base_hparams/*.yaml 2>/dev/null | wc -l)
 
-echo "Model weights found: $model_count"
+echo "Soluble model weights found: $model_count"
 echo "Config files found: $config_count"
 
 if [ $model_count -gt 0 ] && [ $config_count -gt 0 ]; then
     echo ""
     echo "✓ Setup completed successfully!"
     echo ""
-    echo "Available models:"
-    ls data/input/BioMPNN/vanilla_model_weights/*.pt 2>/dev/null | xargs -n 1 basename
+    echo "Available soluble models:"
+    ls data/input/BioMPNN/soluble_model_weights/*.pt 2>/dev/null | xargs -n 1 basename
     echo ""
     echo "Next steps:"
     echo "1. Prepare your training data (see examples/example_training_data.json)"
-    echo "2. Run training: python -m src.dpo_inv.run_dpo --train_data <your_data.json>"
-    echo "3. See SETUP_GUIDE.md for detailed instructions"
+    echo "2. Run training with soluble models:"
+    echo "   python -m src.dpo_inv.run_dpo \\"
+    echo "     --train_data <your_data.json> \\"
+    echo "     --base_model_dir data/input/BioMPNN/soluble_model_weights \\"
+    echo "     --base_model_name v_48_020"
+    echo ""
+    echo "For inference:"
+    echo "   python -m src.dpo_inv.inference \\"
+    echo "     --model_path outputs/model/best_model.pt \\"
+    echo "     --pdb_file your_protein.pdb \\"
+    echo "     --base_model_dir data/input/BioMPNN/soluble_model_weights"
 else
     echo ""
     echo "⚠ Warning: Setup may be incomplete"
-    echo "Please ensure model weights (.pt files) are in:"
-    echo "  data/input/BioMPNN/vanilla_model_weights/"
+    echo "Please ensure soluble model weights (.pt files) are in:"
+    echo "  data/input/BioMPNN/soluble_model_weights/"
     echo ""
-    echo "See SETUP_GUIDE.md for manual setup instructions"
+    echo "You can download them manually from:"
+    echo "  https://files.ipd.uw.edu/pub/training_sets/soluble_model_weights/"
 fi
 
 echo ""

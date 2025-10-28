@@ -6,8 +6,8 @@ echo "Example DPO Training"
 echo "=========================================="
 
 # Check if base models are set up
-if [ ! -f "data/input/BioMPNN/vanilla_model_weights/v_48_020.pt" ]; then
-    echo "Error: Base model weights not found!"
+if [ ! -f "data/input/BioMPNN/soluble_model_weights/v_48_020.pt" ]; then
+    echo "Error: Soluble model weights not found!"
     echo "Please run: ./scripts/setup_base_models.sh"
     exit 1
 fi
@@ -58,7 +58,7 @@ python -m src.dpo_inv.run_dpo \
     --train_data "$TRAIN_DATA" \
     --output_dir outputs/example_dpo_model \
     --base_model_name v_48_020 \
-    --base_model_dir data/input/BioMPNN/vanilla_model_weights \
+    --base_model_dir data/input/BioMPNN/soluble_model_weights \
     --base_model_config_dir data/input/BioMPNN/base_hparams \
     --num_epochs 10 \
     --batch_size 1 \
