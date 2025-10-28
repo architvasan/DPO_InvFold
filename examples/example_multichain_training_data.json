@@ -1,0 +1,26 @@
+[
+    {
+        "pdb_file": "data/structures/protein1.pdb",
+        "preferred_seq": "ACDEFGHIKLMNPQRSTVWY",
+        "unpreferred_seq": "ACDEFGHIKLMNPQRSTVWA",
+        "design_chains": ["B"],
+        "fixed_chains": ["A"],
+        "description": "Design chain B while using chain A as fixed context"
+    },
+    {
+        "pdb_file": "data/structures/protein2.pdb",
+        "preferred_seq": "MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQAPILSRVGDGTQDNLSGAEKAVQVKVKALPDAQFEVVHSLAKWKRQTLGQHDFSAGEGLYTHMKALRPDEDRLSPLHSVYVDQWDWERVMGDGERQFSTLKSTVEAIWAGIKATEAAVSEEFGLAPFLPDQIHFVHSQELLSRYPDLDAKGRERAIAKDLGAVFLVGIGGKLSDGHRHDVRAPDYDDWSTPSELGHAGLNGDILVWNPVLEDAFELSSMGIRVDADTLKHQLALTGDEDRLELEWHQALLRGEMPQTIGGGIGQSRLTMLLLQLPHIGQVQAGVWPAAVRESVPSLL",
+        "unpreferred_seq": "MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQAPILSRVGDGTQDNLSGAEKAVQVKVKALPDAQFEVVHSLAKWKRQTLGQHDFSAGEGLYTHMKALRPDEDRLSPLHSVYVDQWDWERVMGDGERQFSTLKSTVEAIWAGIKATEAAVSEEFGLAPFLPDQIHFVHSQELLSRYPDLDAKGRERAIAKDLGAVFLVGIGGKLSDGHRHDVRAPDYDDWSTPSELGHAGLNGDILVWNPVLEDAFELSSMGIRVDADTLKHQLALTGDEDRLELEWHQALLRGEMPQTIGGGIGQSRLTMLLLQLPHIGQVQAGVWPAAVRESVPSLA",
+        "design_chains": ["A", "B"],
+        "fixed_chains": ["C"],
+        "description": "Design chains A and B while keeping chain C fixed"
+    },
+    {
+        "pdb_file": "data/structures/protein3.pdb",
+        "preferred_seq": "ACDEFGHIKLMNPQRSTVWY",
+        "unpreferred_seq": "ACDEFGHIKLMNPQRSTVWA",
+        "chain_id": "A",
+        "description": "Single chain design (legacy format, still supported)"
+    }
+]
+

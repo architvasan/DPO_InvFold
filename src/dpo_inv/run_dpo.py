@@ -34,11 +34,11 @@ except ImportError:
 
 class PreferenceDataset(Dataset):
     """Dataset for DPO training with preferred/unpreferred sequence pairs."""
-    
+
     def __init__(self, data_file, max_length=500):
         """
         Initialize dataset from a JSON file.
-        
+
         Args:
             data_file: Path to JSON file with format:
                 [
@@ -47,107 +47,153 @@ class PreferenceDataset(Dataset):
                         "preferred_seq": "ACDEFG...",
                         "unpreferred_seq": "ACDEFH...",
                         "chain_id": "A"  # optional, defaults to first chain
+
+                        # Optional multi-chain support:
+                        "design_chains": ["B"],  # chains to design
+                        "fixed_chains": ["A"],   # chains to keep fixed (context)
                     },
                     ...
                 ]
             max_length: Maximum protein length to include
         """
         self.max_length = max_length
-        
+
         with open(data_file, 'r') as f:
             self.data = json.load(f)
-        
+
         # Filter by length
         self.data = [d for d in self.data if len(d['preferred_seq']) <= max_length]
-        
+
         print(f"Loaded {len(self.data)} preference pairs from {data_file}")
-    
+
     def __len__(self):
         return len(self.data)
-    
+
     def __getitem__(self, idx):
         return self.data[idx]
 
 
-def load_pdb_structure(pdb_file, chain_id=None):
+def load_pdb_structure(pdb_file, chain_id=None, design_chains=None, fixed_chains=None):
     """
     Load a PDB structure and extract coordinates and sequence.
-    
+
     Args:
         pdb_file: Path to PDB file
-        chain_id: Chain to extract (if None, uses first chain)
-    
+        chain_id: Single chain to extract (legacy, for backward compatibility)
+        design_chains: List of chain IDs to design (will be masked)
+        fixed_chains: List of chain IDs to keep fixed (context chains)
+
     Returns:
         dict with 'seq', 'coords_chain_X', 'name' keys compatible with tied_featurize
     """
     from Bio.PDB import PDBParser
-    
+
     parser = PDBParser(QUIET=True)
     structure = parser.get_structure('protein', pdb_file)
-    
+
     # Get first model
     model = structure[0]
-    
-    # Get chain
-    if chain_id is None:
-        chain = list(model.get_chains())[0]
-        chain_id = chain.id
+
+    # Determine which chains to load
+    if design_chains is not None or fixed_chains is not None:
+        # Multi-chain mode
+        chains_to_load = []
+        if design_chains:
+            chains_to_load.extend(design_chains)
+        if fixed_chains:
+            chains_to_load.extend(fixed_chains)
+
+        # Remove duplicates while preserving order
+        seen = set()
+        chains_to_load = [x for x in chains_to_load if not (x in seen or seen.add(x))]
+    elif chain_id is not None:
+        # Single chain mode (legacy)
+        chains_to_load = [chain_id]
     else:
-        chain = model[chain_id]
+        # Default: use first chain
+        first_chain = list(model.get_chains())[0]
+        chains_to_load = [first_chain.id]
     
-    # Extract sequence and coordinates
-    seq = []
-    coords_n = []
-    coords_ca = []
-    coords_c = []
-    coords_o = []
-    
+    # Extract sequence and coordinates for all chains
     aa_3to1 = {
         'ALA': 'A', 'CYS': 'C', 'ASP': 'D', 'GLU': 'E', 'PHE': 'F',
         'GLY': 'G', 'HIS': 'H', 'ILE': 'I', 'LYS': 'K', 'LEU': 'L',
         'MET': 'M', 'ASN': 'N', 'PRO': 'P', 'GLN': 'Q', 'ARG': 'R',
         'SER': 'S', 'THR': 'T', 'VAL': 'V', 'TRP': 'W', 'TYR': 'Y'
     }
-    
-    for residue in chain:
-        if residue.id[0] != ' ':  # Skip hetero residues
-            continue
-        
-        resname = residue.resname
-        if resname not in aa_3to1:
-            seq.append('X')
-        else:
-            seq.append(aa_3to1[resname])
-        
-        # Get backbone atoms
-        try:
-            coords_n.append(residue['N'].coord)
-            coords_ca.append(residue['CA'].coord)
-            coords_c.append(residue['C'].coord)
-            coords_o.append(residue['O'].coord)
-        except KeyError:
-            # Missing backbone atoms - use CA position for all
-            ca_coord = residue['CA'].coord
-            coords_n.append(ca_coord)
-            coords_ca.append(ca_coord)
-            coords_c.append(ca_coord)
-            coords_o.append(ca_coord)
-    
-    seq_str = ''.join(seq)
-    
-    # Format for tied_featurize
+
     batch_entry = {
         'name': os.path.basename(pdb_file),
-        'seq': seq_str,
-        f'seq_chain_{chain_id}': seq_str,
-        f'coords_chain_{chain_id}': {
+    }
+
+    all_seq = []
+
+    for chain_id in chains_to_load:
+        try:
+            chain = model[chain_id]
+        except KeyError:
+            print(f"Warning: Chain {chain_id} not found in {pdb_file}")
+            continue
+
+        seq = []
+        coords_n = []
+        coords_ca = []
+        coords_c = []
+        coords_o = []
+
+        for residue in chain:
+            if residue.id[0] != ' ':  # Skip hetero residues
+                continue
+
+            resname = residue.resname
+            if resname not in aa_3to1:
+                seq.append('X')
+            else:
+                seq.append(aa_3to1[resname])
+
+            # Get backbone atoms
+            try:
+                coords_n.append(residue['N'].coord)
+                coords_ca.append(residue['CA'].coord)
+                coords_c.append(residue['C'].coord)
+                coords_o.append(residue['O'].coord)
+            except KeyError:
+                # Missing backbone atoms - use CA position for all
+                ca_coord = residue['CA'].coord
+                coords_n.append(ca_coord)
+                coords_ca.append(ca_coord)
+                coords_c.append(ca_coord)
+                coords_o.append(ca_coord)
+
+        seq_str = ''.join(seq)
+        all_seq.append(seq_str)
+
+        # Add chain-specific data
+        batch_entry[f'seq_chain_{chain_id}'] = seq_str
+        batch_entry[f'coords_chain_{chain_id}'] = {
             f'N_chain_{chain_id}': coords_n,
             f'CA_chain_{chain_id}': coords_ca,
             f'C_chain_{chain_id}': coords_c,
             f'O_chain_{chain_id}': coords_o,
         }
-    }
-    
+
+    # Add full sequence (concatenation of all chains)
+    batch_entry['seq'] = ''.join(all_seq)
+
+    # Add multi-chain information for tied_featurize
+    if design_chains is not None:
+        batch_entry['masked_list'] = design_chains
+    else:
+        # Default: design the first/only chain
+        batch_entry['masked_list'] = [chains_to_load[0]]
+
+    if fixed_chains is not None:
+        batch_entry['visible_list'] = fixed_chains
+    else:
+        batch_entry['visible_list'] = []
+
+    batch_entry['num_of_chains'] = len(chains_to_load)
+
     return batch_entry
 
 
@@ -161,20 +207,26 @@ def seq_to_tensor(seq, device='cpu'):
 def collate_preference_batch(batch_list, device='cpu'):
     """
     Collate a batch of preference pairs into tensors.
-    
+
     Args:
         batch_list: List of dicts with 'pdb_file', 'preferred_seq', 'unpreferred_seq'
+                    Optional: 'chain_id', 'design_chains', 'fixed_chains'
         device: Device to place tensors on
-    
+
     Returns:
         Tuple of (structure_batch, S_preferred, S_unpreferred, mask)
     """
     # Load structures
     pdb_batch = []
     for item in batch_list:
-        pdb_entry = load_pdb_structure(item['pdb_file'], item.get('chain_id'))
+        pdb_entry = load_pdb_structure(
+            item['pdb_file'],
+            chain_id=item.get('chain_id'),
+            design_chains=item.get('design_chains'),
+            fixed_chains=item.get('fixed_chains')
+        )
         pdb_batch.append(pdb_entry)
-    
+
     # Featurize structures
     structure_batch = list(tied_featurize(pdb_batch, device, None))
     

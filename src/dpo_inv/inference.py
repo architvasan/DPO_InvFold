@@ -18,29 +18,28 @@ from dpo_inv.overwrite import tied_featurize
 from dpo_inv.run_dpo import load_pdb_structure
 
 
-def generate_sequences(model, pdb_file, chain_id=None, num_samples=10, 
-                       temperature=0.1, device='cpu'):
+def generate_sequences(model, pdb_file, chain_id=None, design_chains=None,
+                       fixed_chains=None, num_samples=10, temperature=0.1, device='cpu'):
     """
     Generate sequences for a given protein backbone.
-    
+
     Args:
         model: BioMPNN model
         pdb_file: Path to PDB file
-        chain_id: Chain to design (if None, uses first chain)
+        chain_id: Single chain to design (legacy, for backward compatibility)
+        design_chains: List of chain IDs to design (will be masked)
+        fixed_chains: List of chain IDs to keep fixed (context chains)
         num_samples: Number of sequences to generate
         temperature: Sampling temperature
         device: Device to run on
-    
+
     Returns:
         List of generated sequences
     """
-    # Load structure
-    pdb_entry = load_pdb_structure(pdb_file, chain_id)
-    
-    # Add required fields for tied_featurize
-    pdb_entry['masked_list'] = [chain_id or list(pdb_entry.keys())[0].split('_')[-1]]
-    pdb_entry['visible_list'] = []
-    pdb_entry['num_of_chains'] = 1
+    # Load structure with multi-chain support
+    pdb_entry = load_pdb_structure(pdb_file, chain_id=chain_id,
+                                   design_chains=design_chains,
+                                   fixed_chains=fixed_chains)
     
     # Featurize
     batch = [pdb_entry]
@@ -141,18 +140,22 @@ def main(args):
         
         # Generate sequences
         sequences = generate_sequences(
-            model, pdb_file, 
+            model, pdb_file,
             chain_id=args.chain_id,
+            design_chains=args.design_chains,
+            fixed_chains=args.fixed_chains,
             num_samples=args.num_samples,
             temperature=args.temperature,
             device=device
         )
-        
+
         # Store results
         pdb_name = os.path.basename(pdb_file)
         all_results[pdb_name] = {
             'pdb_file': pdb_file,
             'chain_id': args.chain_id,
+            'design_chains': args.design_chains,
+            'fixed_chains': args.fixed_chains,
             'sequences': sequences,
             'num_samples': args.num_samples,
             'temperature': args.temperature
@@ -194,8 +197,12 @@ if __name__ == "__main__":
     parser.add_argument('--pdb_list', type=str, default=None,
                        help='Path to text file with list of PDB files (one per line)')
     parser.add_argument('--chain_id', type=str, default=None,
-                       help='Chain ID to design (if None, uses first chain)')
-    
+                       help='Chain ID to design (legacy, for single chain)')
+    parser.add_argument('--design_chains', type=str, nargs='+', default=None,
+                       help='Chain IDs to design (e.g., --design_chains B C)')
+    parser.add_argument('--fixed_chains', type=str, nargs='+', default=None,
+                       help='Chain IDs to keep fixed as context (e.g., --fixed_chains A)')
+
     # Model paths (for loading base model configs)
     parser.add_argument('--base_model_dir', type=str,
                        default='data/input/BioMPNN/soluble_model_weights',
