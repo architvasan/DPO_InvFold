@@ -310,9 +310,30 @@ def validate(model, base_model, dataloader, beta, temperature, device):
 
 def main(args):
     """Main training function."""
-    # Set device
-    device = torch.device('cuda' if torch.cuda.is_available() and not args.no_cuda else 'cpu')
-    print(f"Using device: {device}")
+    # Set device with XPU support
+    if not args.no_cuda:
+        try:
+            import intel_extension_for_pytorch as ipex
+            if hasattr(torch, 'xpu') and torch.xpu.is_available():
+                device = torch.device('xpu')
+                print(f"Using device: {device} (Intel XPU)")
+            elif torch.cuda.is_available():
+                device = torch.device('cuda')
+                print(f"Using device: {device}")
+            else:
+                device = torch.device('cpu')
+                print(f"Using device: {device}")
+        except ImportError:
+            # IPEX not available, fall back to CUDA or CPU
+            if torch.cuda.is_available():
+                device = torch.device('cuda')
+                print(f"Using device: {device}")
+            else:
+                device = torch.device('cpu')
+                print(f"Using device: {device}")
+    else:
+        device = torch.device('cpu')
+        print(f"Using device: {device} (forced CPU mode)")
 
     # Set paths for ProteinMPNN models
     BioMPNN.base_model_pt_dir_path = args.base_model_dir
@@ -449,7 +470,7 @@ if __name__ == "__main__":
     parser.add_argument('--output_dir', type=str, default='output/dpo_training',
                        help='Directory to save trained models and logs')
     parser.add_argument('--no_cuda', action='store_true',
-                       help='Disable CUDA even if available')
+                       help='Disable GPU acceleration (CUDA/XPU) and force CPU mode')
 
     args = parser.parse_args()
 
