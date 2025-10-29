@@ -289,11 +289,11 @@ def collate_preference_batch(batch_list, device='cpu'):
     return structure_batch, S_preferred, S_unpreferred
 
 
-def compute_dpo_loss(model, base_model, structure_batch, S_preferred, S_unpreferred, 
-                     beta=0.1, temperature=0.1, device='cpu'):
+def compute_dpo_loss(model, base_model, structure_batch, S_preferred, S_unpreferred,
+                     beta=0.1, temperature=0.1, device='cpu', verbose=False):
     """
     Compute DPO loss for a batch.
-    
+
     Args:
         model: Fine-tuned model (being trained)
         base_model: Reference model (frozen)
@@ -303,7 +303,8 @@ def compute_dpo_loss(model, base_model, structure_batch, S_preferred, S_unprefer
         beta: DPO beta parameter (KL penalty weight)
         temperature: Sampling temperature
         device: Device
-    
+        verbose: If True, print diagnostic information
+
     Returns:
         loss: DPO loss scalar
     """
@@ -354,12 +355,31 @@ def compute_dpo_loss(model, base_model, structure_batch, S_preferred, S_unprefer
 
     log_pi_base_pref = (log_pi_base_pref * chain_M).sum(1)
     log_pi_base_unpref = (log_pi_base_unpref * chain_M).sum(1)
-    
+
+    # Compute log ratios
+    log_ratio_pref = log_pi_theta_pref - log_pi_base_pref
+    log_ratio_unpref = log_pi_theta_unpref - log_pi_base_unpref
+
     # DPO loss: -log(sigmoid(beta * (log_ratio_preferred - log_ratio_unpreferred)))
-    loss = -torch.log(torch.sigmoid(
-        beta * (log_pi_theta_pref - log_pi_base_pref - log_pi_theta_unpref + log_pi_base_unpref)
-    ))
-    
+    # This encourages the model to increase the ratio for preferred sequences
+    # and decrease it for unpreferred sequences
+    logits = beta * (log_ratio_pref - log_ratio_unpref)
+    loss = -torch.nn.functional.logsigmoid(logits)
+
+    # Diagnostic output
+    if verbose:
+        print(f"\n=== DPO Loss Diagnostics ===")
+        print(f"log_pi_theta_pref:  mean={log_pi_theta_pref.mean().item():.2f}, std={log_pi_theta_pref.std().item():.2f}")
+        print(f"log_pi_theta_unpref: mean={log_pi_theta_unpref.mean().item():.2f}, std={log_pi_theta_unpref.std().item():.2f}")
+        print(f"log_pi_base_pref:   mean={log_pi_base_pref.mean().item():.2f}, std={log_pi_base_pref.std().item():.2f}")
+        print(f"log_pi_base_unpref:  mean={log_pi_base_unpref.mean().item():.2f}, std={log_pi_base_unpref.std().item():.2f}")
+        print(f"log_ratio_pref:     mean={log_ratio_pref.mean().item():.2f}, std={log_ratio_pref.std().item():.2f}")
+        print(f"log_ratio_unpref:   mean={log_ratio_unpref.mean().item():.2f}, std={log_ratio_unpref.std().item():.2f}")
+        print(f"logits (beta * diff): mean={logits.mean().item():.2f}, std={logits.std().item():.2f}")
+        print(f"loss:               mean={loss.mean().item():.4f}")
+        print(f"beta: {beta}, temperature: {temperature}")
+        print(f"===========================\n")
+
     return loss.mean()
 
 
@@ -376,8 +396,10 @@ def train_epoch(model, base_model, dataloader, optimizer, beta, temperature, dev
         structure_batch, S_pref, S_unpref = collate_preference_batch(batch, device)
 
         optimizer.zero_grad()
+        # Print diagnostics on first batch only
+        verbose = (num_batches == 0)
         loss = compute_dpo_loss(model, base_model, structure_batch, S_pref, S_unpref,
-                               beta, temperature, device)
+                               beta, temperature, device, verbose=verbose)
         loss.backward()
         optimizer.step()
 
