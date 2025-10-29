@@ -250,26 +250,39 @@ def collate_preference_batch(batch_list, device='cpu'):
                 structure_batch_moved.append(item)
         structure_batch = tuple(structure_batch_moved)
     
-    # Get max length in batch
-    max_len = max(len(item['preferred_seq']) for item in batch_list)
-    
+    # Get the actual structure length from the batch
+    # The structure determines the max length, not the sequences
+    # structure_batch is a tuple: (X, S, mask, lengths, ...)
+    # X is the first element with shape [B, L, 4, 3] or [B, L, 1, 3]
+    if isinstance(structure_batch, (list, tuple)):
+        X_temp = structure_batch[0]  # X is the first element
+        structure_max_len = X_temp.shape[1]  # [B, L, ...]
+    else:
+        # Fallback to sequence-based max length
+        structure_max_len = max(len(item['preferred_seq']) for item in batch_list)
+
     # Convert sequences to tensors
     S_preferred_list = []
     S_unpreferred_list = []
-    
+
     for item in batch_list:
         S_pref = seq_to_tensor(item['preferred_seq'], device)
         S_unpref = seq_to_tensor(item['unpreferred_seq'], device)
-        
-        # Pad to max length
-        if len(S_pref) < max_len:
-            S_pref = F.pad(S_pref, (0, max_len - len(S_pref)), value=0)
-        if len(S_unpref) < max_len:
-            S_unpref = F.pad(S_unpref, (0, max_len - len(S_unpref)), value=0)
-        
+
+        # Pad or truncate to match structure length
+        if len(S_pref) < structure_max_len:
+            S_pref = F.pad(S_pref, (0, structure_max_len - len(S_pref)), value=0)
+        elif len(S_pref) > structure_max_len:
+            S_pref = S_pref[:structure_max_len]
+
+        if len(S_unpref) < structure_max_len:
+            S_unpref = F.pad(S_unpref, (0, structure_max_len - len(S_unpref)), value=0)
+        elif len(S_unpref) > structure_max_len:
+            S_unpref = S_unpref[:structure_max_len]
+
         S_preferred_list.append(S_pref)
         S_unpreferred_list.append(S_unpref)
-    
+
     S_preferred = torch.stack(S_preferred_list, dim=0)
     S_unpreferred = torch.stack(S_unpreferred_list, dim=0)
     
@@ -300,12 +313,19 @@ def compute_dpo_loss(model, base_model, structure_batch, S_preferred, S_unprefer
         tied_pos_list_of_lists_list, pssm_coef, pssm_bias, pssm_log_odds_all, \
         bias_by_res_all, tied_beta = structure_batch
     
-    B = len(X)
+    B = X.shape[0]
     max_length = S_preferred.shape[1]
     decoding_order = torch.arange(max_length).repeat(B, 1).to(device)
-    
+
+    # Debug: Check sequence indices are valid
+    if S_preferred.max() > 20 or S_unpreferred.max() > 20:
+        print(f"WARNING: Invalid sequence indices detected!")
+        print(f"S_preferred max: {S_preferred.max()}, min: {S_preferred.min()}")
+        print(f"S_unpreferred max: {S_unpreferred.max()}, min: {S_unpreferred.min()}")
+        print(f"Expected range: 0-20 (21 amino acids)")
+
     # Forward pass through fine-tuned model
-    log_probs_pref = model(X, S_preferred, mask, chain_M, residue_idx, 
+    log_probs_pref = model(X, S_preferred, mask, chain_M, residue_idx,
                            chain_encoding_all, decoding_order,
                            omit_AA_mask=omit_AA_mask, temperature=temperature)
     
@@ -324,11 +344,30 @@ def compute_dpo_loss(model, base_model, structure_batch, S_preferred, S_unprefer
                                            omit_AA_mask=omit_AA_mask, temperature=temperature)
     
     # Gather log probabilities for actual sequences
-    log_pi_theta_pref = log_probs_pref.gather(-1, S_preferred.unsqueeze(-1)).squeeze(-1).sum(1)
-    log_pi_theta_unpref = log_probs_unpref.gather(-1, S_unpreferred.unsqueeze(-1)).squeeze(-1).sum(1)
-    
-    log_pi_base_pref = base_log_probs_pref.gather(-1, S_preferred.unsqueeze(-1)).squeeze(-1).sum(1)
-    log_pi_base_unpref = base_log_probs_unpref.gather(-1, S_unpreferred.unsqueeze(-1)).squeeze(-1).sum(1)
+    # Check vocab size and clamp indices to valid range
+    vocab_size = log_probs_pref.shape[-1]
+
+    # Debug output
+    print(f"Model output vocab size: {vocab_size}")
+    print(f"log_probs_pref shape: {log_probs_pref.shape}")
+    print(f"S_preferred shape: {S_preferred.shape}, max: {S_preferred.max()}, min: {S_preferred.min()}")
+
+    # Clamp indices to valid range to avoid out-of-bounds errors
+    S_preferred_clamped = torch.clamp(S_preferred, 0, vocab_size - 1)
+    S_unpreferred_clamped = torch.clamp(S_unpreferred, 0, vocab_size - 1)
+
+    log_pi_theta_pref = log_probs_pref.gather(-1, S_preferred_clamped.unsqueeze(-1)).squeeze(-1)
+    log_pi_theta_unpref = log_probs_unpref.gather(-1, S_unpreferred_clamped.unsqueeze(-1)).squeeze(-1)
+
+    log_pi_base_pref = base_log_probs_pref.gather(-1, S_preferred_clamped.unsqueeze(-1)).squeeze(-1)
+    log_pi_base_unpref = base_log_probs_unpref.gather(-1, S_unpreferred_clamped.unsqueeze(-1)).squeeze(-1)
+
+    # Mask out padded positions using chain_M (1.0 for positions to predict, 0.0 for padding)
+    log_pi_theta_pref = (log_pi_theta_pref * chain_M).sum(1)
+    log_pi_theta_unpref = (log_pi_theta_unpref * chain_M).sum(1)
+
+    log_pi_base_pref = (log_pi_base_pref * chain_M).sum(1)
+    log_pi_base_unpref = (log_pi_base_unpref * chain_M).sum(1)
     
     # DPO loss: -log(sigmoid(beta * (log_ratio_preferred - log_ratio_unpreferred)))
     loss = -torch.log(torch.sigmoid(
