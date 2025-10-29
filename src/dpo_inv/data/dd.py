@@ -102,7 +102,7 @@ class DD(OrderedDict):
             if isinstance(value, DD):
                 this[key] = value.evaluate()
             else:
-                if value == "INPUT" or value.startswith("OPTIONAL:"):
+                if isinstance(value, str) and (value == "INPUT" or value.startswith("OPTIONAL:")):
                     if key in G.ARGS or f"--{key}" in G.ARGS_UNKNOWN:
                         value = (
                             G.ARGS[key]
@@ -118,7 +118,8 @@ class DD(OrderedDict):
                 if key == "CLS":
                     this[key] = get_class(value)
                 else:
-                    this[key] = eval(value)
+                    # Only eval if value is a string, otherwise use as-is
+                    this[key] = eval(value) if isinstance(value, str) else value
         return this
 
     def copy(self):
