@@ -198,10 +198,16 @@ def load_pdb_structure(pdb_file, chain_id=None, design_chains=None, fixed_chains
 
 
 def seq_to_tensor(seq, device='cpu'):
-    """Convert amino acid sequence to tensor indices."""
+    """Convert amino acid sequence to tensor indices.
+
+    Always creates tensor on CPU first, then moves to device to avoid XPU issues.
+    """
     alphabet = 'ACDEFGHIKLMNPQRSTVWYX'
     indices = [alphabet.index(aa) if aa in alphabet else alphabet.index('X') for aa in seq]
-    return torch.tensor(indices, dtype=torch.long, device=device)
+    tensor = torch.tensor(indices, dtype=torch.long, device='cpu')
+    if str(device) != 'cpu':
+        tensor = tensor.to(device)
+    return tensor
 
 
 def collate_preference_batch(batch_list, device='cpu'):
@@ -227,8 +233,22 @@ def collate_preference_batch(batch_list, device='cpu'):
         )
         pdb_batch.append(pdb_entry)
 
-    # Featurize structures
-    structure_batch = list(tied_featurize(pdb_batch, device, None))
+    # ALWAYS featurize on CPU first to avoid XPU segfaults
+    # tied_featurize creates tensors with .to(device) which can cause issues on XPU
+    structure_batch = list(tied_featurize(pdb_batch, 'cpu', None))
+
+    # Move all tensors to target device after featurization
+    if str(device) != 'cpu':
+        structure_batch_moved = []
+        for item in structure_batch:
+            if isinstance(item, torch.Tensor):
+                structure_batch_moved.append(item.to(device))
+            elif isinstance(item, list):
+                # Keep lists as-is (like letter_list_list, visible_list_list, etc.)
+                structure_batch_moved.append(item)
+            else:
+                structure_batch_moved.append(item)
+        structure_batch = tuple(structure_batch_moved)
     
     # Get max length in batch
     max_len = max(len(item['preferred_seq']) for item in batch_list)
@@ -369,6 +389,15 @@ def main(args):
             if hasattr(torch, 'xpu') and torch.xpu.is_available():
                 device = torch.device('xpu')
                 print(f"Using device: {device} (Intel XPU)")
+                print(f"XPU device count: {torch.xpu.device_count()}")
+                print(f"IPEX version: {ipex.__version__}")
+                print()
+                print("XPU Optimization: All tensors created on CPU first, then moved to XPU")
+                print("If you encounter segfaults:")
+                print("  1. Source scripts/setup_xpu_env.sh before running")
+                print("  2. Reduce --batch_size to 1")
+                print("  3. See XPU_TROUBLESHOOTING.md")
+                print()
             elif torch.cuda.is_available():
                 device = torch.device('cuda')
                 print(f"Using device: {device}")
@@ -383,6 +412,10 @@ def main(args):
             else:
                 device = torch.device('cpu')
                 print(f"Using device: {device}")
+        except Exception as e:
+            print(f"Warning: Error initializing GPU: {e}")
+            print("Falling back to CPU mode")
+            device = torch.device('cpu')
     else:
         device = torch.device('cpu')
         print(f"Using device: {device} (forced CPU mode)")
