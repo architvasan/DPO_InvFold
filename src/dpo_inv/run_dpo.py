@@ -419,11 +419,16 @@ def main(args):
             train_dataset, [train_size, val_size]
         )
 
+    # Custom collate function to handle our data format
+    def identity_collate(batch):
+        """Identity collate function - just returns the batch as-is."""
+        return batch
+
     # Create dataloaders
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size,
-                             shuffle=True, num_workers=0)
+                             shuffle=True, num_workers=0, collate_fn=identity_collate)
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size,
-                           shuffle=False, num_workers=0)
+                           shuffle=False, num_workers=0, collate_fn=identity_collate)
 
     print(f"Train size: {len(train_dataset)}, Val size: {len(val_dataset)}")
 
