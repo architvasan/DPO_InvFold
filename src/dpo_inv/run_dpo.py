@@ -317,13 +317,6 @@ def compute_dpo_loss(model, base_model, structure_batch, S_preferred, S_unprefer
     max_length = S_preferred.shape[1]
     decoding_order = torch.arange(max_length).repeat(B, 1).to(device)
 
-    # Debug: Check sequence indices are valid
-    if S_preferred.max() > 20 or S_unpreferred.max() > 20:
-        print(f"WARNING: Invalid sequence indices detected!")
-        print(f"S_preferred max: {S_preferred.max()}, min: {S_preferred.min()}")
-        print(f"S_unpreferred max: {S_unpreferred.max()}, min: {S_unpreferred.min()}")
-        print(f"Expected range: 0-20 (21 amino acids)")
-
     # Forward pass through fine-tuned model
     log_probs_pref = model(X, S_preferred, mask, chain_M, residue_idx,
                            chain_encoding_all, decoding_order,
@@ -344,15 +337,8 @@ def compute_dpo_loss(model, base_model, structure_batch, S_preferred, S_unprefer
                                            omit_AA_mask=omit_AA_mask, temperature=temperature)
     
     # Gather log probabilities for actual sequences
-    # Check vocab size and clamp indices to valid range
-    vocab_size = log_probs_pref.shape[-1]
-
-    # Debug output
-    print(f"Model output vocab size: {vocab_size}")
-    print(f"log_probs_pref shape: {log_probs_pref.shape}")
-    print(f"S_preferred shape: {S_preferred.shape}, max: {S_preferred.max()}, min: {S_preferred.min()}")
-
     # Clamp indices to valid range to avoid out-of-bounds errors
+    vocab_size = log_probs_pref.shape[-1]
     S_preferred_clamped = torch.clamp(S_preferred, 0, vocab_size - 1)
     S_unpreferred_clamped = torch.clamp(S_unpreferred, 0, vocab_size - 1)
 
@@ -384,19 +370,23 @@ def train_epoch(model, base_model, dataloader, optimizer, beta, temperature, dev
     
     total_loss = 0.0
     num_batches = 0
-    
-    for batch in tqdm(dataloader, desc="Training"):
+
+    pbar = tqdm(dataloader, desc="Training")
+    for batch in pbar:
         structure_batch, S_pref, S_unpref = collate_preference_batch(batch, device)
-        
+
         optimizer.zero_grad()
         loss = compute_dpo_loss(model, base_model, structure_batch, S_pref, S_unpref,
                                beta, temperature, device)
         loss.backward()
         optimizer.step()
-        
+
         total_loss += loss.item()
         num_batches += 1
-    
+
+        # Update progress bar with current loss
+        pbar.set_postfix({'loss': f'{loss.item():.4f}', 'avg_loss': f'{total_loss/num_batches:.4f}'})
+
     return total_loss / num_batches
 
 
@@ -409,12 +399,16 @@ def validate(model, base_model, dataloader, beta, temperature, device):
     num_batches = 0
 
     with torch.no_grad():
-        for batch in tqdm(dataloader, desc="Validation"):
+        pbar = tqdm(dataloader, desc="Validation")
+        for batch in pbar:
             structure_batch, S_pref, S_unpref = collate_preference_batch(batch, device)
             loss = compute_dpo_loss(model, base_model, structure_batch, S_pref, S_unpref,
                                    beta, temperature, device)
             total_loss += loss.item()
             num_batches += 1
+
+            # Update progress bar with current loss
+            pbar.set_postfix({'loss': f'{loss.item():.4f}', 'avg_loss': f'{total_loss/num_batches:.4f}'})
 
     return total_loss / num_batches
 
@@ -532,19 +526,25 @@ def main(args):
         val_loss = validate(model, base_model, val_loader,
                           args.beta, args.temperature, device)
 
-        print(f"\nEpoch {epoch + 1} - Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
+        print(f"\n{'='*60}")
+        print(f"Epoch {epoch + 1} Summary:")
+        print(f"  Train Loss: {train_loss:.4f}")
+        print(f"  Val Loss:   {val_loss:.4f}")
+        if val_loss < best_val_loss:
+            print(f"  ✓ New best validation loss! (previous: {best_val_loss:.4f})")
+        print(f"{'='*60}")
 
         # Save checkpoint
         checkpoint_path = output_dir / f'checkpoint_epoch_{epoch + 1}.pt'
         model.save_to_file(str(checkpoint_path))
-        print(f"Saved checkpoint to {checkpoint_path}")
+        print(f"\nSaved checkpoint to {checkpoint_path}")
 
         # Save best model
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_path = output_dir / 'best_model.pt'
             model.save_to_file(str(best_path))
-            print(f"New best model! Saved to {best_path}")
+            print(f"Saved best model to {best_path}")
 
         # Save latest
         latest_path = output_dir / 'latest_model.pt'
