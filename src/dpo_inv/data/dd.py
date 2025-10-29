@@ -4,7 +4,7 @@ import os
 from collections import OrderedDict
 import yaml
 
-import dpo_inv.data.global as G
+import dpo_inv.data.glob as G
 from dpo_inv.data.utils import get_class, file_to_str
 
 
