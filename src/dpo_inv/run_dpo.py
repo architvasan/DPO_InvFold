@@ -606,7 +606,7 @@ if __name__ == "__main__":
                        help='Number of training epochs')
     parser.add_argument('--batch_size', type=int, default=1,
                        help='Batch size (number of protein structures per batch)')
-    parser.add_argument('--lr', type=float, default=3e-7,
+    parser.add_argument('--lr', type=float, default=3e-6,
                        help='Learning rate')
     parser.add_argument('--weight_decay', type=float, default=0.0,
                        help='Weight decay for optimizer')
