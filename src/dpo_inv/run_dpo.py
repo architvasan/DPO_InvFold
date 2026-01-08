@@ -73,7 +73,7 @@ class PreferenceDataset(Dataset):
         return self.data[idx]
 
 
-def load_pdb_structure(pdb_file, chain_id=None, design_chains=None, fixed_chains=None):
+def load_pdb_structure(pdb_file, chain_id='B', design_chains=None, fixed_chains=None):
     """
     Load a PDB structure and extract coordinates and sequence.
 
@@ -225,13 +225,15 @@ def collate_preference_batch(batch_list, device='cpu'):
     # Load structures
     pdb_batch = []
     for item in batch_list:
+        #print(item.get('chain_id'))
         pdb_entry = load_pdb_structure(
             item['pdb_file'],
-            chain_id=item.get('chain_id'),
-            design_chains=item.get('design_chains'),
-            fixed_chains=item.get('fixed_chains')
+            chain_id='B',#item.get('chain_id'),
+            design_chains='B',#item.get('design_chains'),
+            fixed_chains='A',#item.get('fixed_chains')
         )
         pdb_batch.append(pdb_entry)
+        print(pdb_entry)
 
     # ALWAYS featurize on CPU first to avoid XPU segfaults
     # tied_featurize creates tensors with .to(device) which can cause issues on XPU

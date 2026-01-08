@@ -56,18 +56,18 @@ echo ""
 
 python -m src.dpo_inv.run_dpo \
     --train_data "$TRAIN_DATA" \
-    --output_dir outputs/example_dpo_model \
+    --output_dir outputs/dpo_training \
     --base_model_name v_48_020 \
     --base_model_dir data/input/BioMPNN/soluble_model_weights \
     --base_model_config_dir data/input/BioMPNN/base_hparams \
     --num_epochs 10 \
     --batch_size 1 \
-    --lr 3e-7 \
+    --lr 3e-6 \
     --weight_decay 0.0 \
     --beta 0.1 \
     --temperature 0.1 \
-    --max_length 500 \
-    --save_every 2
+    --max_length 500 #\
+    #--save_every 2
 
 echo ""
 echo "=========================================="

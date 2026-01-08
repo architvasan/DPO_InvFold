@@ -8,7 +8,7 @@
 #   ./scripts/run_dpo_ddp_local.sh 4
 
 # Number of GPUs (default: all available)
-NGPUS=${1:-$(python -c "import torch; print(torch.cuda.device_count() if torch.cuda.is_available() else 1)")}
+NGPUS=12 #${1:-$(python -c "import torch; print(torch.cuda.device_count() if torch.cuda.is_available() else 1)")}
 
 echo "=========================================="
 echo "Local DDP Training"
