@@ -63,7 +63,11 @@ class PreferenceDataset(Dataset):
 
         # Filter by length
         self.data = [d for d in self.data if len(d['preferred_seq']) <= max_length]
-
+        
+        for d in self.data:
+            d['chain_id'] = 'B' #['A', 'B']
+            #d['design_chains'] = 'B'
+            #d['fixed_chains'] = 'A'
         print(f"Loaded {len(self.data)} preference pairs from {data_file}")
 
     def __len__(self):
@@ -228,12 +232,12 @@ def collate_preference_batch(batch_list, device='cpu'):
         #print(item.get('chain_id'))
         pdb_entry = load_pdb_structure(
             item['pdb_file'],
-            chain_id='B',#item.get('chain_id'),
-            design_chains='B',#item.get('design_chains'),
-            fixed_chains='A',#item.get('fixed_chains')
+            chain_id=item.get('chain_id'),
+            design_chains=item.get('design_chains'),
+            fixed_chains=item.get('fixed_chains')
         )
         pdb_batch.append(pdb_entry)
-        print(pdb_entry)
+        #print(pdb_entry)
 
     # ALWAYS featurize on CPU first to avoid XPU segfaults
     # tied_featurize creates tensors with .to(device) which can cause issues on XPU

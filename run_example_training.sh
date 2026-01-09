@@ -43,12 +43,12 @@ echo "  Learning rate: 3e-7"
 echo "  Beta: 0.1"
 echo ""
 
-read -p "Start training? (y/n) " -n 1 -r
-echo
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo "Training cancelled."
-    exit 0
-fi
+#read -p "Start training? (y/n) " -n 1 -r
+#echo
+#if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+#    echo "Training cancelled."
+#    exit 0
+#fi
 
 echo ""
 echo "Starting training..."
