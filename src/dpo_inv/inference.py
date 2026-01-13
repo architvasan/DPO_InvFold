@@ -58,23 +58,28 @@ def generate_sequences(model, pdb_file, chain_id=None, design_chains=None,
     alphabet = 'ACDEFGHIKLMNPQRSTVWYX'
     
     sequences = []
-    
+
+    # Prepare omit_AAs_np and bias_AAs_np as numpy arrays
+    # These control which amino acids to omit/bias during sampling
+    omit_AAs_np = np.zeros(21)  # No amino acids omitted by default
+    bias_AAs_np = np.zeros(21)  # No bias by default
+
     model.eval()
     with torch.no_grad():
         for i in range(num_samples):
             # Sample sequence
             S_sample, log_probs = model.sample(
                 X, randn, S, chain_M, chain_encoding_all,
-                residue_idx, mask=mask, chain_M_pos = chain_M_pos, temperature=temperature,
-                omit_AA_mask = omit_AA_mask, omit_AAs_np = omit_AA_mask
+                residue_idx, mask=mask, chain_M_pos=chain_M_pos, temperature=temperature,
+                omit_AA_mask=omit_AA_mask, omit_AAs_np=omit_AAs_np, bias_AAs_np=bias_AAs_np
             )
-            
+
             # Decode sequence
             seq_str = ''.join([alphabet[aa] for aa in S_sample[0].cpu().numpy() if aa < len(alphabet)])
             sequences.append(seq_str)
-            
+
             print(f"Sample {i+1}/{num_samples}: {seq_str[:50]}..." if len(seq_str) > 50 else f"Sample {i+1}/{num_samples}: {seq_str}")
-    
+
     return sequences
 
 

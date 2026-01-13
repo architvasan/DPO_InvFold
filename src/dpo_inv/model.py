@@ -213,7 +213,6 @@ class BioMPNN(nn.Module):
         h_V = torch.zeros((E.shape[0], E.shape[1], E.shape[-1]), device=device)  # seem to be the node embeddings
         h_E = self.actor.W_e(E)  # seem to be the edge embeddings
 
-        print(f'{chain_mask=}, {chain_M_pos=}, {mask=}')
         # Encoder is unmasked self-attention
         mask_attend = gather_nodes(mask.unsqueeze(-1),  E_idx).squeeze(-1)
         mask_attend = mask.unsqueeze(-1) * mask_attend
@@ -260,9 +259,16 @@ class BioMPNN(nn.Module):
         # h_V_stack is a list of hidden node tensors of shape [N, L_max, 128] - one for each layer
         h_V_stack = [h_V] + [torch.zeros_like(h_V, device=device) for _ in range(len(self.actor.decoder_layers))]
 
-        # contant is used to adjust the logits of the output layer before feeding them into the softmax
-        constant = torch.tensor(omit_AAs_np, device=device)  # shape = (21, ) - one for each AA. 1 if the AA should not be sampled
-        constant_bias = torch.tensor(bias_AAs_np, device=device)
+        # constant is used to adjust the logits of the output layer before feeding them into the softmax
+        # Handle None values for omit_AAs_np and bias_AAs_np
+        if omit_AAs_np is None:
+            omit_AAs_np = np.zeros(21)
+        if bias_AAs_np is None:
+            bias_AAs_np = np.zeros(21)
+
+        # Convert numpy arrays to tensors (use from_numpy to avoid warnings)
+        constant = torch.from_numpy(np.array(omit_AAs_np, dtype=np.float32)).to(device)  # shape = (21, ) - one for each AA. 1 if the AA should not be sampled
+        constant_bias = torch.from_numpy(np.array(bias_AAs_np, dtype=np.float32)).to(device)
 
         #chain_mask_combined = chain_mask*chain_M_pos
         omit_AA_mask_flag = omit_AA_mask != None
