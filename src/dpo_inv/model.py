@@ -213,6 +213,7 @@ class BioMPNN(nn.Module):
         h_V = torch.zeros((E.shape[0], E.shape[1], E.shape[-1]), device=device)  # seem to be the node embeddings
         h_E = self.actor.W_e(E)  # seem to be the edge embeddings
 
+        print(f'{chain_mask=}, {chain_M_pos=}, {mask=}')
         # Encoder is unmasked self-attention
         mask_attend = gather_nodes(mask.unsqueeze(-1),  E_idx).squeeze(-1)
         mask_attend = mask.unsqueeze(-1) * mask_attend

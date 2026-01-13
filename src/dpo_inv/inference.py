@@ -65,7 +65,8 @@ def generate_sequences(model, pdb_file, chain_id=None, design_chains=None,
             # Sample sequence
             S_sample, log_probs = model.sample(
                 X, randn, S, chain_M, chain_encoding_all,
-                residue_idx, mask=mask, temperature=temperature
+                residue_idx, mask=mask, chain_M_pos = chain_M_pos, temperature=temperature,
+                omit_AA_mask = omit_AA_mask, omit_AAs_np = omit_AA_mask
             )
             
             # Decode sequence
