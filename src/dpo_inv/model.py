@@ -270,6 +270,10 @@ class BioMPNN(nn.Module):
         constant = torch.from_numpy(np.array(omit_AAs_np, dtype=np.float32)).to(device)  # shape = (21, ) - one for each AA. 1 if the AA should not be sampled
         constant_bias = torch.from_numpy(np.array(bias_AAs_np, dtype=np.float32)).to(device)
 
+        # Handle None for bias_by_res - create zero tensor if not provided
+        if bias_by_res is None:
+            bias_by_res = torch.zeros((N_batch, N_nodes, 21), device=device, dtype=torch.float32)
+
         #chain_mask_combined = chain_mask*chain_M_pos
         omit_AA_mask_flag = omit_AA_mask != None
 
