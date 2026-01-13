@@ -31,6 +31,7 @@ import torch.nn.functional as F
 from dpo_inv.data import DD, str_to_file, file_to_str
 
 from dpo_inv.mpnn_utils import gather_nodes, ProteinMPNN, cat_neighbors_nodes
+import numpy as np
 
 class BioMPNN(nn.Module):
     base_model_pt_dir_path = None
