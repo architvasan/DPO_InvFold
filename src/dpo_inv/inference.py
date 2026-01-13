@@ -67,12 +67,15 @@ def generate_sequences(model, pdb_file, chain_id=None, design_chains=None,
     model.eval()
     with torch.no_grad():
         for i in range(num_samples):
-            # Sample sequence
-            S_sample, log_probs = model.sample(
+            # Sample sequence - returns a dictionary
+            output_dict = model.sample(
                 X, randn, S, chain_M, chain_encoding_all,
                 residue_idx, mask=mask, chain_M_pos=chain_M_pos, temperature=temperature,
                 omit_AA_mask=omit_AA_mask, omit_AAs_np=omit_AAs_np, bias_AAs_np=bias_AAs_np
             )
+
+            # Extract sampled sequence from output dictionary
+            S_sample = output_dict["S"]
 
             # Decode sequence
             seq_str = ''.join([alphabet[aa] for aa in S_sample[0].cpu().numpy() if aa < len(alphabet)])
