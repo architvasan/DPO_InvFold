@@ -256,7 +256,7 @@ def create_mutable_mask(item, seq_length, device='cpu'):
     return mutable_mask
 
 
-def collate_preference_batch(batch_list, device='cpu'):
+def collate_preference_batch(batch_list, device='cpu', global_mutable_positions=None, global_mutable_ranges=None):
     """
     Collate a batch of preference pairs into tensors.
 
@@ -264,6 +264,8 @@ def collate_preference_batch(batch_list, device='cpu'):
         batch_list: List of dicts with 'pdb_file', 'preferred_seq', 'unpreferred_seq'
                     Optional: 'chain_id', 'design_chains', 'fixed_chains', 'mutable_positions'
         device: Device to place tensors on
+        global_mutable_positions: Global mutable positions to apply to all samples (overrides per-item)
+        global_mutable_ranges: Global mutable ranges to apply to all samples (overrides per-item)
 
     Returns:
         Tuple of (structure_batch, S_preferred, S_unpreferred, mutable_mask_batch)
@@ -319,7 +321,18 @@ def collate_preference_batch(batch_list, device='cpu'):
         S_unpref = seq_to_tensor(item['unpreferred_seq'], device)
 
         # Create mutable mask for this item
-        mutable_mask = create_mutable_mask(item, structure_max_len, device)
+        # If global mutable positions/ranges are provided, use them; otherwise use per-item settings
+        if global_mutable_positions is not None or global_mutable_ranges is not None:
+            # Create a temporary item with global settings
+            temp_item = {}
+            if global_mutable_positions is not None:
+                temp_item['mutable_positions'] = global_mutable_positions
+            if global_mutable_ranges is not None:
+                temp_item['mutable_ranges'] = global_mutable_ranges
+            mutable_mask = create_mutable_mask(temp_item, structure_max_len, device)
+        else:
+            # Use per-item settings from JSON
+            mutable_mask = create_mutable_mask(item, structure_max_len, device)
 
         # Pad or truncate to match structure length
         if len(S_pref) < structure_max_len:
@@ -504,17 +517,19 @@ def compute_dpo_loss(model, base_model, structure_batch, S_preferred, S_unprefer
     return total_loss
 
 
-def train_epoch(model, base_model, dataloader, optimizer, beta, temperature, diversity_lambda, device):
+def train_epoch(model, base_model, dataloader, optimizer, beta, temperature, diversity_lambda, device,
+                global_mutable_positions=None, global_mutable_ranges=None):
     """Train for one epoch."""
     model.train()
     base_model.eval()
-    
+
     total_loss = 0.0
     num_batches = 0
 
     pbar = tqdm(dataloader, desc="Training")
     for batch in pbar:
-        structure_batch, S_pref, S_unpref, mutable_mask = collate_preference_batch(batch, device)
+        structure_batch, S_pref, S_unpref, mutable_mask = collate_preference_batch(
+            batch, device, global_mutable_positions, global_mutable_ranges)
 
         optimizer.zero_grad()
         # Print diagnostics on first batch only
@@ -533,7 +548,8 @@ def train_epoch(model, base_model, dataloader, optimizer, beta, temperature, div
     return total_loss / num_batches
 
 
-def validate(model, base_model, dataloader, beta, temperature, diversity_lambda, device):
+def validate(model, base_model, dataloader, beta, temperature, diversity_lambda, device,
+             global_mutable_positions=None, global_mutable_ranges=None):
     """Validate the model."""
     model.eval()
     base_model.eval()
@@ -544,7 +560,8 @@ def validate(model, base_model, dataloader, beta, temperature, diversity_lambda,
     with torch.no_grad():
         pbar = tqdm(dataloader, desc="Validation")
         for batch in pbar:
-            structure_batch, S_pref, S_unpref, mutable_mask = collate_preference_batch(batch, device)
+            structure_batch, S_pref, S_unpref, mutable_mask = collate_preference_batch(
+                batch, device, global_mutable_positions, global_mutable_ranges)
             loss = compute_dpo_loss(model, base_model, structure_batch, S_pref, S_unpref,
                                    beta, temperature, diversity_lambda, mutable_mask, device)
             total_loss += loss.item()
@@ -650,6 +667,24 @@ def main(args):
     with open(output_dir / 'config.json', 'w') as f:
         json.dump(config, f, indent=2)
 
+    # Parse global mutable ranges if provided
+    global_mutable_positions = args.mutable_positions
+    global_mutable_ranges = None
+
+    if args.mutable_ranges:
+        global_mutable_ranges = []
+        for r in args.mutable_ranges:
+            start, end = map(int, r.split('-'))
+            global_mutable_ranges.append([start, end])
+        print(f"\nGlobal mutable ranges: {global_mutable_ranges}")
+        print(f"  (These will be applied to ALL training samples)")
+    elif global_mutable_positions:
+        print(f"\nGlobal mutable positions: {global_mutable_positions}")
+        print(f"  (These will be applied to ALL training samples)")
+    else:
+        print(f"\nNo global mutable positions specified.")
+        print(f"  (Will use per-sample mutable_positions/mutable_ranges from JSON if available)")
+
     # Training loop
     best_val_loss = float('inf')
 
@@ -663,11 +698,13 @@ def main(args):
 
         # Train
         train_loss = train_epoch(model, base_model, train_loader, optimizer,
-                                args.beta, args.temperature, args.diversity_lambda, device)
+                                args.beta, args.temperature, args.diversity_lambda, device,
+                                global_mutable_positions, global_mutable_ranges)
 
         # Validate
         val_loss = validate(model, base_model, val_loader,
-                          args.beta, args.temperature, args.diversity_lambda, device)
+                          args.beta, args.temperature, args.diversity_lambda, device,
+                          global_mutable_positions, global_mutable_ranges)
 
         print(f"\n{'='*60}")
         print(f"Epoch {epoch + 1} Summary:")
@@ -739,6 +776,13 @@ if __name__ == "__main__":
                        help='Maximum protein length to include')
     parser.add_argument('--diversity_lambda', type=float, default=0.05,
                        help='Weight for diversity regularization term')
+
+    # Mutable mask arguments
+    parser.add_argument('--mutable_positions', type=int, nargs='+', default=None,
+                       help='Global mutable positions for all samples (e.g., --mutable_positions 6 7 8 9 10)')
+    parser.add_argument('--mutable_ranges', type=str, nargs='+', default=None,
+                       help='Global mutable ranges for all samples (e.g., --mutable_ranges 6-17 29-39 44-46)')
+
     # Output arguments
     parser.add_argument('--output_dir', type=str, default='output/dpo_training',
                        help='Directory to save trained models and logs')
