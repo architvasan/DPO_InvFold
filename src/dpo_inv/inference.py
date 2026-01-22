@@ -19,7 +19,8 @@ from dpo_inv.run_dpo import load_pdb_structure
 
 
 def generate_sequences(model, pdb_file, chain_id=None, design_chains=None,
-                       fixed_chains=None, num_samples=10, temperature=0.1, device='cpu'):
+                       fixed_chains=None, mutable_positions=None, mutable_ranges=None,
+                       num_samples=10, temperature=0.1, device='cpu'):
     """
     Generate sequences for a given protein backbone.
 
@@ -29,6 +30,8 @@ def generate_sequences(model, pdb_file, chain_id=None, design_chains=None,
         chain_id: Single chain to design (legacy, for backward compatibility)
         design_chains: List of chain IDs to design (will be masked)
         fixed_chains: List of chain IDs to keep fixed (context chains)
+        mutable_positions: List of 0-indexed positions to mutate (None = all positions)
+        mutable_ranges: List of [start, end] ranges to mutate (inclusive, None = all)
         num_samples: Number of sequences to generate
         temperature: Sampling temperature
         device: Device to run on
@@ -50,7 +53,33 @@ def generate_sequences(model, pdb_file, chain_id=None, design_chains=None,
         chain_M_pos, omit_AA_mask, residue_idx, dihedral_mask, \
         tied_pos_list_of_lists_list, pssm_coef, pssm_bias, pssm_log_odds_all, \
         bias_by_res_all, tied_beta = structure_batch
-    
+
+    # Create mutable mask if specified
+    seq_length = chain_M.shape[1]
+    if mutable_positions is not None or mutable_ranges is not None:
+        # Start with all positions fixed (0.0)
+        mutable_mask = torch.zeros_like(chain_M)
+
+        # Set mutable positions
+        if mutable_positions is not None:
+            for pos in mutable_positions:
+                if 0 <= pos < seq_length:
+                    mutable_mask[:, pos] = 1.0
+
+        # Set mutable ranges
+        if mutable_ranges is not None:
+            for start, end in mutable_ranges:
+                start = max(0, start)
+                end = min(seq_length - 1, end)
+                mutable_mask[:, start:end+1] = 1.0
+
+        # Combine with chain_M: only design positions that are both in chain_M AND mutable_mask
+        chain_M_original = chain_M.clone()
+        chain_M = chain_M * mutable_mask
+
+        print(f"Mutable positions: {mutable_mask[0].nonzero().squeeze().cpu().numpy().tolist()}")
+        print(f"Total mutable positions: {mutable_mask[0].sum().item():.0f}/{seq_length}")
+
     # Prepare for sampling
     randn = torch.randn(chain_M.shape, device=device)
     
@@ -146,13 +175,23 @@ def main(args):
         if not os.path.exists(pdb_file):
             print(f"Warning: File not found: {pdb_file}")
             continue
-        
+
+        # Parse mutable_ranges if provided
+        mutable_ranges_parsed = None
+        if args.mutable_ranges:
+            mutable_ranges_parsed = []
+            for r in args.mutable_ranges:
+                start, end = map(int, r.split('-'))
+                mutable_ranges_parsed.append([start, end])
+
         # Generate sequences
         sequences = generate_sequences(
             model, pdb_file,
             chain_id=args.chain_id,
             design_chains=args.design_chains,
             fixed_chains=args.fixed_chains,
+            mutable_positions=args.mutable_positions,
+            mutable_ranges=mutable_ranges_parsed,
             num_samples=args.num_samples,
             temperature=args.temperature,
             device=device
@@ -211,6 +250,10 @@ if __name__ == "__main__":
                        help='Chain IDs to design (e.g., --design_chains B C)')
     parser.add_argument('--fixed_chains', type=str, nargs='+', default=None,
                        help='Chain IDs to keep fixed as context (e.g., --fixed_chains A)')
+    parser.add_argument('--mutable_positions', type=int, nargs='+', default=None,
+                       help='List of 0-indexed positions to mutate (e.g., --mutable_positions 10 11 12 13)')
+    parser.add_argument('--mutable_ranges', type=str, nargs='+', default=None,
+                       help='List of ranges to mutate in format "start-end" (e.g., --mutable_ranges 10-15 20-25)')
 
     # Model paths (for loading base model configs)
     parser.add_argument('--base_model_dir', type=str,

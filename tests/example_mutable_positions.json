@@ -1,0 +1,25 @@
+[
+    {
+        "pdb_file": "data/structures/peptide1.pdb",
+        "preferred_seq": "ACDEFGHIKLMNPQRSTVWY",
+        "unpreferred_seq": "ACDEFGHIKLMNPQRSTVWX",
+        "chain_id": "A",
+        "mutable_positions": [10, 11, 12, 13, 14, 15],
+        "comment": "Only enforce diversity on positions 10-15"
+    },
+    {
+        "pdb_file": "data/structures/peptide2.pdb",
+        "preferred_seq": "MKLPQRSTUVWXYZACDEFG",
+        "unpreferred_seq": "MKLPQRSTUVWXYZACDEFH",
+        "mutable_ranges": [[5, 10], [15, 20]],
+        "comment": "Enforce diversity on two ranges: 5-10 and 15-20"
+    },
+    {
+        "pdb_file": "data/structures/peptide3.pdb",
+        "preferred_seq": "ACDEFGHIKLMNPQRSTVWY",
+        "unpreferred_seq": "ACDEFGHIKLMNPQRSTVWX",
+        "chain_id": "B",
+        "comment": "No mutable_positions specified - diversity enforced on all positions (default behavior)"
+    }
+]
+

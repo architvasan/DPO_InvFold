@@ -46,7 +46,12 @@ class PreferenceDataset(Dataset):
                         "pdb_file": "path/to/structure.pdb",
                         "preferred_seq": "ACDEFG...",
                         "unpreferred_seq": "ACDEFH...",
-                        "chain_id": "A"  # optional, defaults to first chain
+                        "chain_id": "A",  # optional, defaults to first chain
+
+                        # Optional: specify which positions to enforce diversity on
+                        "mutable_positions": [10, 11, 12, 13, 14, 15],  # 0-indexed positions
+                        # OR use ranges:
+                        "mutable_ranges": [[10, 15], [20, 25]],  # inclusive ranges
 
                         # Optional multi-chain support:
                         "design_chains": ["B"],  # chains to design
@@ -214,17 +219,54 @@ def seq_to_tensor(seq, device='cpu'):
     return tensor
 
 
+def create_mutable_mask(item, seq_length, device='cpu'):
+    """
+    Create a mutable position mask from dataset item.
+
+    Args:
+        item: Dataset item dict (may contain 'mutable_positions' or 'mutable_ranges')
+        seq_length: Length of the sequence
+        device: Device to place tensor on
+
+    Returns:
+        Tensor of shape [seq_length] with 1.0 for mutable positions, 1.0 for all if not specified
+    """
+    # Default: all positions are mutable
+    mutable_mask = torch.ones(seq_length, dtype=torch.float32, device='cpu')
+
+    # Check for mutable_positions (list of indices)
+    if 'mutable_positions' in item and item['mutable_positions'] is not None:
+        mutable_mask = torch.zeros(seq_length, dtype=torch.float32, device='cpu')
+        for pos in item['mutable_positions']:
+            if 0 <= pos < seq_length:
+                mutable_mask[pos] = 1.0
+
+    # Check for mutable_ranges (list of [start, end] pairs, inclusive)
+    elif 'mutable_ranges' in item and item['mutable_ranges'] is not None:
+        mutable_mask = torch.zeros(seq_length, dtype=torch.float32, device='cpu')
+        for start, end in item['mutable_ranges']:
+            start = max(0, start)
+            end = min(seq_length - 1, end)
+            mutable_mask[start:end+1] = 1.0
+
+    # Move to target device
+    if str(device) != 'cpu':
+        mutable_mask = mutable_mask.to(device)
+
+    return mutable_mask
+
+
 def collate_preference_batch(batch_list, device='cpu'):
     """
     Collate a batch of preference pairs into tensors.
 
     Args:
         batch_list: List of dicts with 'pdb_file', 'preferred_seq', 'unpreferred_seq'
-                    Optional: 'chain_id', 'design_chains', 'fixed_chains'
+                    Optional: 'chain_id', 'design_chains', 'fixed_chains', 'mutable_positions'
         device: Device to place tensors on
 
     Returns:
-        Tuple of (structure_batch, S_preferred, S_unpreferred, mask)
+        Tuple of (structure_batch, S_preferred, S_unpreferred, mutable_mask_batch)
     """
     # Load structures
     pdb_batch = []
@@ -267,13 +309,17 @@ def collate_preference_batch(batch_list, device='cpu'):
         # Fallback to sequence-based max length
         structure_max_len = max(len(item['preferred_seq']) for item in batch_list)
 
-    # Convert sequences to tensors
+    # Convert sequences to tensors and create mutable masks
     S_preferred_list = []
     S_unpreferred_list = []
+    mutable_mask_list = []
 
     for item in batch_list:
         S_pref = seq_to_tensor(item['preferred_seq'], device)
         S_unpref = seq_to_tensor(item['unpreferred_seq'], device)
+
+        # Create mutable mask for this item
+        mutable_mask = create_mutable_mask(item, structure_max_len, device)
 
         # Pad or truncate to match structure length
         if len(S_pref) < structure_max_len:
@@ -288,59 +334,70 @@ def collate_preference_batch(batch_list, device='cpu'):
 
         S_preferred_list.append(S_pref)
         S_unpreferred_list.append(S_unpref)
+        mutable_mask_list.append(mutable_mask)
 
     S_preferred = torch.stack(S_preferred_list, dim=0)
     S_unpreferred = torch.stack(S_unpreferred_list, dim=0)
-    
-    return structure_batch, S_preferred, S_unpreferred
+    mutable_mask_batch = torch.stack(mutable_mask_list, dim=0)
+
+    return structure_batch, S_preferred, S_unpreferred, mutable_mask_batch
 
 
-def compute_diversity_loss(sequences, mask):
+def compute_diversity_loss(sequences, mask, mutable_mask=None):
     """
     Compute diversity loss as negative average pairwise sequence distance.
-    
+
     Args:
         sequences: Tensor of sequences [B, L]
         mask: Mask tensor [B, L] (1.0 for valid positions, 0.0 for padding)
-    
+        mutable_mask: Optional [B, L] mask (1.0 for positions to enforce diversity on)
+
     Returns:
         diversity_loss: Scalar (negative diversity to be minimized)
     """
     B, L = sequences.shape
     if B < 2:
         return torch.tensor(0.0, device=sequences.device)
-    
+
+    # If no mutable_mask provided, use the regular mask
+    if mutable_mask is None:
+        effective_mask = mask
+    else:
+        # Combine both masks: only consider positions that are both valid AND mutable
+        effective_mask = mask * mutable_mask
+
     # Compute pairwise sequence identity
     seq_i = sequences.unsqueeze(1)  # [B, 1, L]
     seq_j = sequences.unsqueeze(0)  # [1, B, L]
     matches = (seq_i == seq_j).float()  # [B, B, L]
-    
-    # Apply mask to only count valid positions
-    mask_i = mask.unsqueeze(1)
-    mask_j = mask.unsqueeze(0)
+
+    # Apply effective mask to only count valid mutable positions
+    mask_i = effective_mask.unsqueeze(1)
+    mask_j = effective_mask.unsqueeze(0)
     valid_mask = mask_i * mask_j
-    
+
     # Count matches and valid positions for each pair
     num_matches = (matches * valid_mask).sum(dim=2)
     num_valid = valid_mask.sum(dim=2)
     sequence_identity = num_matches / (num_valid + 1e-8)
-    
+
     # Distance is 1 - identity
     distance = 1.0 - sequence_identity
-    
+
     # Average pairwise distance (upper triangle only)
     triu_mask = torch.triu(torch.ones(B, B, device=sequences.device), diagonal=1)
     pairwise_distances = (distance * triu_mask).sum()
     num_pairs = B * (B - 1) / 2
     avg_diversity = pairwise_distances / num_pairs
-    
+
     # Return negative (we minimize this, which maximizes diversity)
     return -avg_diversity
 
 
 
 def compute_dpo_loss(model, base_model, structure_batch, S_preferred, S_unpreferred,
-                     beta=0.1, temperature=0.1, diversity_lambda=0.0, device='cpu', verbose=False):
+                     beta=0.1, temperature=0.1, diversity_lambda=0.0, mutable_mask=None,
+                     device='cpu', verbose=False):
     """
     Compute diversity-regularized DPO loss for a batch.
 
@@ -353,6 +410,7 @@ def compute_dpo_loss(model, base_model, structure_batch, S_preferred, S_unprefer
         beta: DPO beta parameter (KL penalty weight)
         temperature: Sampling temperature
         diversity_lambda: Weight for diversity regularization term
+        mutable_mask: Optional [B, L] mask for diversity computation
         device: Device
         verbose: If True, print diagnostic information
 
@@ -421,7 +479,7 @@ def compute_dpo_loss(model, base_model, structure_batch, S_preferred, S_unprefer
     # Compute diversity regularization loss
     diversity_loss = torch.tensor(0.0, device=device)
     if diversity_lambda > 0:
-        diversity_loss = compute_diversity_loss(S_preferred, chain_M)
+        diversity_loss = compute_diversity_loss(S_preferred, chain_M, mutable_mask)
     
     # Total loss: DPO + diversity regularization
     dpo_loss = loss.mean()
@@ -456,13 +514,13 @@ def train_epoch(model, base_model, dataloader, optimizer, beta, temperature, div
 
     pbar = tqdm(dataloader, desc="Training")
     for batch in pbar:
-        structure_batch, S_pref, S_unpref = collate_preference_batch(batch, device)
+        structure_batch, S_pref, S_unpref, mutable_mask = collate_preference_batch(batch, device)
 
         optimizer.zero_grad()
         # Print diagnostics on first batch only
         verbose = (num_batches == 0)
         loss = compute_dpo_loss(model, base_model, structure_batch, S_pref, S_unpref,
-                               beta, temperature, diversity_lambda, device, verbose=verbose)
+                               beta, temperature, diversity_lambda, mutable_mask, device, verbose=verbose)
         loss.backward()
         optimizer.step()
 
@@ -486,9 +544,9 @@ def validate(model, base_model, dataloader, beta, temperature, diversity_lambda,
     with torch.no_grad():
         pbar = tqdm(dataloader, desc="Validation")
         for batch in pbar:
-            structure_batch, S_pref, S_unpref = collate_preference_batch(batch, device)
+            structure_batch, S_pref, S_unpref, mutable_mask = collate_preference_batch(batch, device)
             loss = compute_dpo_loss(model, base_model, structure_batch, S_pref, S_unpref,
-                                   beta, temperature, diversity_lambda, device)
+                                   beta, temperature, diversity_lambda, mutable_mask, device)
             total_loss += loss.item()
             num_batches += 1
 
@@ -667,7 +725,7 @@ if __name__ == "__main__":
     # Training arguments
     parser.add_argument('--num_epochs', type=int, default=10,
                        help='Number of training epochs')
-    parser.add_argument('--batch_size', type=int, default=1,
+    parser.add_argument('--batch_size', type=int, default=16,
                        help='Batch size (number of protein structures per batch)')
     parser.add_argument('--lr', type=float, default=3e-6,
                        help='Learning rate')
